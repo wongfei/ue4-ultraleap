@@ -204,7 +204,10 @@ void FUltraleapTrackingInputDevice::OnFrame(const LEAP_TRACKING_EVENT* Frame)
 void FUltraleapTrackingInputDevice::OnImage(const LEAP_IMAGE_EVENT* ImageEvent)
 {
 	// Forward it to the handler
-	LeapImageHandler->OnImage(ImageEvent);
+	if (LeapImageHandler) // YAAK PATCH
+	{
+		LeapImageHandler->OnImage(ImageEvent);
+	}
 }
 
 void FUltraleapTrackingInputDevice::OnImageCallback(UTexture2D* LeftCapturedTexture, UTexture2D* RightCapturedTexture)
@@ -1157,6 +1160,7 @@ void FUltraleapTrackingInputDevice::SetBSHandFromLeapHand(UBodyStateHand* Hand, 
 }
 
 #pragma endregion BodyState
+
 void FUltraleapTrackingInputDevice::SwitchTrackingSource(const bool UseOpenXRAsSource)
 {
 	if (IsWaitingForConnect)
@@ -1192,11 +1196,9 @@ void FUltraleapTrackingInputDevice::SwitchTrackingSource(const bool UseOpenXRAsS
 		if (Leap->IsConnected())
 		{
 			break;
-}
-
+		}
 		FPlatformProcess::Sleep(0.01f);
 	}
-
 	if (Leap->IsConnected())
 	{
 		UE_LOG(UltraleapTrackingLog, Log, TEXT("Leap Service Connected After %.5f Seconds"), FPlatformTime::Seconds() - StartTime);
@@ -1207,6 +1209,7 @@ void FUltraleapTrackingInputDevice::SwitchTrackingSource(const bool UseOpenXRAsS
 	}
 	// <-- YAAK PATCH
 }
+
 void FUltraleapTrackingInputDevice::SetOptions(const FLeapOptions& InOptions)
 {
 	if (GEngine && GEngine->XRSystem.IsValid())
