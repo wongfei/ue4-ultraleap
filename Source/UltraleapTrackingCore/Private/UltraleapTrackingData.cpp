@@ -68,6 +68,9 @@ void FLeapFrameData::SetFromLeapFrame(struct _LEAP_TRACKING_EVENT* frame)
 	}
 
 	FrameId = frame->tracking_frame_id;
+
+	// this effectively counters our weird hand movement scaling issues - need to investigate where they come from in the first place, but this is a good workaround
+	ScaleFrame(1.15f);
 }
 
 void FLeapFrameData::SetInterpolationPartialFromLeapFrame(struct _LEAP_TRACKING_EVENT* frame)

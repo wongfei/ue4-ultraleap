@@ -1177,6 +1177,30 @@ void FUltraleapTrackingInputDevice::SwitchTrackingSource(const bool UseOpenXRAsS
 		IsWaitingForConnect = true;
 	}
 	Leap->OpenConnection(this);
+
+	// --> YAAK PATCH
+	// if running standalone, leap needs some extra time to establish the connection to the attached device, if any
+	const double StartTime = FPlatformTime::Seconds();
+	const double MaxWaitTime = 1.0;
+	while (FPlatformTime::Seconds() - StartTime < MaxWaitTime)
+	{
+		if (Leap->IsConnected())
+		{
+			break;
+		}
+
+		FPlatformProcess::Sleep(0.01f);
+	}
+
+	if (Leap->IsConnected())
+	{
+		UE_LOG(UltraleapTrackingLog, Log, TEXT("Leap Service Connected After %.5f Seconds"), FPlatformTime::Seconds() - StartTime);
+	}
+	else
+	{
+		UE_LOG(UltraleapTrackingLog, Log, TEXT("Leap Service NOT Connected"));
+	}
+	// <-- YAAK PATCH
 }
 void FUltraleapTrackingInputDevice::SetOptions(const FLeapOptions& InOptions)
 {
@@ -1194,7 +1218,12 @@ void FUltraleapTrackingInputDevice::SetOptions(const FLeapOptions& InOptions)
 		Options.bUseOpenXRAsSource = InOptions.bUseOpenXRAsSource;
 	}
 	// Did we change the mode?
-	if (Options.Mode != InOptions.Mode)
+	// --> YAAK PATCH
+	// Force this change, as the async API callbacks might cause issues
+	// when sending policy calls and tracking mode changes in short order,
+	// which is the case in our startup sequence
+	//if (Options.Mode != InOptions.Mode)
+	// <-- YAAK PATCH
 	{
 		if (bUseNewTrackingModeAPI)
 		{

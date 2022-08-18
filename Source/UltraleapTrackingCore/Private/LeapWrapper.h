@@ -144,6 +144,8 @@ public:
 	{
 	}
 
+	LeapWrapperCallbackInterface* GetCallbackDelegate() { return CallbackDelegate; }
+
 protected:
 	LeapWrapperCallbackInterface* CallbackDelegate = nullptr;
 	UWorld* CurrentWorld = nullptr;

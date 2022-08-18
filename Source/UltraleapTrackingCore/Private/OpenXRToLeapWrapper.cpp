@@ -11,6 +11,7 @@
 #include "LeapBlueprintFunctionLibrary.h"
 #include "LeapUtility.h"
 #include "Runtime/Engine/Classes/Engine/World.h"
+#include "IXRTrackingSystem.h" // YAAK PATCH
 
 FOpenXRToLeapWrapper::FOpenXRToLeapWrapper()
 {

@@ -1,23 +1,57 @@
-
-
 #include "LeapWrapper.h"
 
 #include "LeapAsync.h"
 #include "LeapUtility.h"
 #include "Runtime/Core/Public/Misc/Timespan.h"
 
+// BEGIN YAAK PATCH
+
+/*
+	Leap likes to fire async tasks on game thread but doesn't care about context(this) state.
+	Sometimes the task may be executed after the FLeapWrapper is already destroyed and cause crash.
+
+	TaskRefPolicy = FLeapAsync::RunShortLambdaOnGameThread([CurrentPolicy, this]
+	{
+		// <this> may be invalid!
+		this->CallbackDelegate->OnPolicy(CurrentPolicy);
+	});
+*/
+
+#include <atomic>
+static std::atomic<FLeapWrapper*> LeapContextAtomic;
+
+inline void SetLeapContextPtr(FLeapWrapper* InContext)
+{
+	LeapContextAtomic.store(InContext);
+}
+
+inline bool IsLeapContextValid(FLeapWrapper* InContext)
+{
+	auto* CachedContext = LeapContextAtomic.load();
+	return (InContext == CachedContext && InContext->GetCallbackDelegate());
+}
+
+// END YAAK PATCH
+
 #pragma region LeapC Wrapper
 
 FLeapWrapper::FLeapWrapper() : bIsRunning(false)
 {
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("+FLeapWrapper"));
+
 	InterpolatedFrame = nullptr;
 	InterpolatedFrameSize = 0;
 }
 
 FLeapWrapper::~FLeapWrapper()
 {
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("~FLeapWrapper"));
+
 	bIsRunning = false;
+
+	SetLeapContextPtr(nullptr);
 	CallbackDelegate = nullptr;
+
 	LatestFrame = nullptr;
 	ConnectionHandle = nullptr;
 
@@ -37,7 +71,9 @@ FLeapWrapper::~FLeapWrapper()
 
 void FLeapWrapper::SetCallbackDelegate(LeapWrapperCallbackInterface* InCallbackDelegate)
 {
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("SetCallbackDelegate %p"), InCallbackDelegate);
 	CallbackDelegate = InCallbackDelegate;
+	SetLeapContextPtr(this);
 }
 
 LEAP_CONNECTION* FLeapWrapper::OpenConnection(LeapWrapperCallbackInterface* InCallbackDelegate)
@@ -73,6 +109,8 @@ LEAP_CONNECTION* FLeapWrapper::OpenConnection(LeapWrapperCallbackInterface* InCa
 
 void FLeapWrapper::CloseConnection()
 {
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("FLeapWrapper::CloseConnection"));
+
 	if (!bIsConnected)
 	{
 		// Not connected, already done
@@ -90,6 +128,7 @@ void FLeapWrapper::CloseConnection()
 	ProducerLambdaFuture.Reset();
 
 	// Nullify the callback delegate. Any outstanding task graphs will not run if the delegate is nullified.
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("Reset CallbackDelegate"));
 	CallbackDelegate = nullptr;
 
 	UE_LOG(UltraleapTrackingLog, Log, TEXT("Connection successfully closed."));
@@ -356,12 +395,13 @@ void FLeapWrapper::HandleDeviceEvent(const LEAP_DEVICE_EVENT* DeviceEvent)
 
 	if (CallbackDelegate)
 	{
-		TaskRefDeviceFound = FLeapAsync::RunShortLambdaOnGameThread([DeviceEvent, DeviceProperties, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefDeviceFound = FLeapAsync::RunShortLambdaOnGameThread([DeviceEvent, DeviceProperties, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnDeviceFound(&DeviceProperties);
-				free(DeviceProperties.serial);
+				Context->CallbackDelegate->OnDeviceFound(&DeviceProperties);
 			}
+			free(DeviceProperties.serial);
 		});
 	}
 	else
@@ -380,10 +420,11 @@ void FLeapWrapper::HandleDeviceLostEvent(const LEAP_DEVICE_EVENT* DeviceEvent)
 
 	if (CallbackDelegate)
 	{
-		TaskRefDeviceLost = FLeapAsync::RunShortLambdaOnGameThread([DeviceEvent, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefDeviceLost = FLeapAsync::RunShortLambdaOnGameThread([DeviceEvent, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnDeviceLost(CurrentDeviceInfo->serial);
+				Context->CallbackDelegate->OnDeviceLost(Context->CurrentDeviceInfo->serial);
 			}
 		});
 	}
@@ -394,10 +435,11 @@ void FLeapWrapper::HandleDeviceFailureEvent(const LEAP_DEVICE_FAILURE_EVENT* Dev
 {
 	if (CallbackDelegate)
 	{
-		TaskRefDeviceFailure = FLeapAsync::RunShortLambdaOnGameThread([DeviceFailureEvent, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefDeviceFailure = FLeapAsync::RunShortLambdaOnGameThread([DeviceFailureEvent, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnDeviceFailure(DeviceFailureEvent->status, DeviceFailureEvent->hDevice);
+				Context->CallbackDelegate->OnDeviceFailure(DeviceFailureEvent->status, DeviceFailureEvent->hDevice);
 			}
 		});
 	}
@@ -438,10 +480,11 @@ void FLeapWrapper::HandleLogEvent(const LEAP_LOG_EVENT* LogEvent)
 {
 	if (CallbackDelegate)
 	{
-		TaskRefLog = FLeapAsync::RunShortLambdaOnGameThread([LogEvent, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefLog = FLeapAsync::RunShortLambdaOnGameThread([LogEvent, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnLog(LogEvent->severity, LogEvent->timestamp, LogEvent->message);
+				Context->CallbackDelegate->OnLog(LogEvent->severity, LogEvent->timestamp, LogEvent->message);
 			}
 		});
 	}
@@ -455,10 +498,11 @@ void FLeapWrapper::HandlePolicyEvent(const LEAP_POLICY_EVENT* PolicyEvent)
 		// this is always coming back as 0, this means either the Leap service refused to set any flags?
 		// or there's a bug in the policy notification system with Leap Motion V4.
 		const uint32_t CurrentPolicy = PolicyEvent->current_policy;
-		TaskRefPolicy = FLeapAsync::RunShortLambdaOnGameThread([CurrentPolicy, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefPolicy = FLeapAsync::RunShortLambdaOnGameThread([CurrentPolicy, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnPolicy(CurrentPolicy);
+				Context->CallbackDelegate->OnPolicy(CurrentPolicy);
 			}
 		});
 	}
@@ -472,10 +516,11 @@ void FLeapWrapper::HandleTrackingModeEvent(const LEAP_TRACKING_MODE_EVENT* Track
 		// this is always coming back as 0, this means either the Leap service refused to set any flags?
 		// or there's a bug in the policy notification system with Leap Motion V4.
 		const uint32_t CurrentMode = TrackingModeEvent->current_tracking_mode;
-		TaskRefPolicy = FLeapAsync::RunShortLambdaOnGameThread([CurrentMode, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefPolicy = FLeapAsync::RunShortLambdaOnGameThread([CurrentMode, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnTrackingMode((eLeapTrackingMode) CurrentMode);
+				Context->CallbackDelegate->OnTrackingMode((eLeapTrackingMode) CurrentMode);
 			}
 		});
 	}
@@ -486,10 +531,11 @@ void FLeapWrapper::HandleConfigChangeEvent(const LEAP_CONFIG_CHANGE_EVENT* Confi
 {
 	if (CallbackDelegate)
 	{
-		TaskRefConfigChange = FLeapAsync::RunShortLambdaOnGameThread([ConfigChangeEvent, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefConfigChange = FLeapAsync::RunShortLambdaOnGameThread([ConfigChangeEvent, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnConfigChange(ConfigChangeEvent->requestID, ConfigChangeEvent->status);
+				Context->CallbackDelegate->OnConfigChange(ConfigChangeEvent->requestID, ConfigChangeEvent->status);
 			}
 		});
 	}
@@ -500,10 +546,11 @@ void FLeapWrapper::HandleConfigResponseEvent(const LEAP_CONFIG_RESPONSE_EVENT* C
 {
 	if (CallbackDelegate)
 	{
-		TaskRefConfigResponse = FLeapAsync::RunShortLambdaOnGameThread([ConfigResponseEvent, this] {
-			if (CallbackDelegate)
+		auto* Context = this;
+		TaskRefConfigResponse = FLeapAsync::RunShortLambdaOnGameThread([ConfigResponseEvent, Context] {
+			if (IsLeapContextValid(Context))
 			{
-				CallbackDelegate->OnConfigResponse(ConfigResponseEvent->requestID, ConfigResponseEvent->value);
+				Context->CallbackDelegate->OnConfigResponse(ConfigResponseEvent->requestID, ConfigResponseEvent->value);
 			}
 		});
 	}
@@ -515,6 +562,8 @@ void FLeapWrapper::HandleConfigResponseEvent(const LEAP_CONFIG_RESPONSE_EVENT* C
  */
 void FLeapWrapper::ServiceMessageLoop(void* Unused)
 {
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("ENTER ServiceMessageLoop"));
+
 	eLeapRS Result;
 	LEAP_CONNECTION_MESSAGE Msg;
 	LEAP_CONNECTION Handle = ConnectionHandle;	  // copy handle so it doesn't get released from under us on game thread
@@ -589,6 +638,8 @@ void FLeapWrapper::ServiceMessageLoop(void* Unused)
 				break;
 		}	 // switch on msg.type
 	}		 // end while running
+
+	UE_LOG(UltraleapTrackingLog, Log, TEXT("LEAVE ServiceMessageLoop"));
 }
 
 #pragma endregion LeapC Wrapper
