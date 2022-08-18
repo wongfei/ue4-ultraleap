@@ -13,6 +13,8 @@
 
 class ULeapComponent;
 
+enum class ELeapQuatSwizzleAxisB : uint8; // YAAK PATCH
+
 /**
  * The public interface to this module.  In most cases, this interface is only public to sibling modules
  * within this plugin.

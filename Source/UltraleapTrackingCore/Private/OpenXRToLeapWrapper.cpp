@@ -16,6 +16,7 @@
 #include "LeapUtility.h"
 #include "Runtime/Engine/Classes/Engine/World.h"
 
+
 FOpenXRToLeapWrapper::FOpenXRToLeapWrapper()
 {
 	CurrentDeviceInfo = &DummyDeviceInfo;

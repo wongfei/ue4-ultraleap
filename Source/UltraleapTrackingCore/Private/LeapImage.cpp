@@ -120,7 +120,12 @@ void FLeapImage::UpdateTextureRegions(UTexture2D* Texture, int32 MipIndex, uint3
 
 void FLeapImage::UpdateTextureRegions(UTexture2D* Texture, const LEAP_IMAGE& Image, uint8* SrcData)
 {
-	UpdateTextureRegions(Texture, 0, 1, &UpdateTextureRegion, Image.properties.width, Image.properties.bpp, SrcData, true);
+	// YAAK PATCH
+	// fix image data copy happening on game thread, which is slow
+	// the free-call crashes, and I suppose it's not needed (shouldn't leak)
+	// UpdateTextureRegions(Texture, 0, 1, &UpdateTextureRegion, Image.properties.width, Image.properties.bpp, SrcData, true);
+	UpdateTextureRegions(Texture, 0, 1, &UpdateTextureRegion, Image.properties.width, Image.properties.bpp, SrcData, false);
+	// YAAK PATCH
 }
 
 void FLeapImage::UpdateTextureOnGameThread(UTexture2D* Texture, uint8* SrcData, const int32 BufferLength)
@@ -184,15 +189,27 @@ void FLeapImage::OnImage(const LEAP_IMAGE_EVENT* ImageEvent)
 	{
 		if (LeftImageTexture && RightImageTexture)
 		{
+			// YAAK PATCH
+			// fix image data copy happening on game thread, which is slow
+			// this needs to happen in the render thread, not in the game thread lambda below
+			UpdateTextureRegions(LeftImageTexture, LeftLeapImage, LeftImageBuffer.GetData());
+			UpdateTextureRegions(RightImageTexture, RightLeapImage, RightImageBuffer.GetData());
+			// YAAK PATCH
+
 			FLeapAsync::RunShortLambdaOnGameThread([&, BufferSize] {
 				if (bIsQuitting)
 				{
 					return;
 				}
+
+				// YAAK PATCH
+				// fix image data copy happening on game thread, which is slow
+				// Leap's statement below is a lie!
 				// This is sufficient for now since leap images are small
-				UpdateTextureOnGameThread(LeftImageTexture, LeftImageBuffer.GetData(), BufferSize);
-				UpdateTextureOnGameThread(RightImageTexture, RightImageBuffer.GetData(), BufferSize);
-				bRenderDidUpdate = true;
+				// UpdateTextureOnGameThread(LeftImageTexture, LeftImageBuffer.GetData(), BufferSize);
+				// UpdateTextureOnGameThread(RightImageTexture, RightImageBuffer.GetData(), BufferSize);
+				// bRenderDidUpdate = true;
+				// YAAK PATCH
 
 				// Todo: swap to optimized when ready
 				// UpdateTextureRegions(LeftImageTexture, LeftLeapImage, LeftImageBuffer.GetData());
